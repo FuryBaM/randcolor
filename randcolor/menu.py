@@ -1,4 +1,5 @@
 import os,glob,random,sys,json,datetime,time
+import numpy as np
 from tqdm import tqdm
 from PIL import Image, ImageDraw
 
@@ -51,11 +52,8 @@ def Calibrate():
 	print (f"{imagename}\nWidth: {width}\nHeight: {height}\n")	
 	black = (0,0,0)
 	water = (0,0,255)
-	
-	curPoint = 0
 	for y in tqdm(range(round(height)), ascii=" ░▒▓"):
 		for x in range(round(width)):
-			curPoint=curPoint+1
 			point = (x, y)
 			if img.getpixel(point) != black and img.getpixel(point) != water:
 				img.putpixel(point, (255,255,255)) 
@@ -153,6 +151,22 @@ def ClearBorders():
 	width = round(width/1)
 	height = round(height/1)
 	print("\nRemoving borders\n")
+	def one(x, y):
+		i=x
+		j=y+k
+		return i,j
+	def two(x, y):
+		i=x
+		j=y-k
+		return i,j
+	def three(x, y):
+		i=x+k
+		j=y
+		return i,j
+	def four(x, y):
+		i=x-k
+		j=y
+		return i,j
 	for y in tqdm(range(round(height)), ascii=" ░▒▓"):
 		for x in range(round(width)):
 			curPoint=curPoint+1
@@ -166,22 +180,6 @@ def ClearBorders():
 				fillColor = img.getpixel(point)
 				sides=[]
 				while fillColor==black:
-					def one():
-						i=x
-						j=y+k
-						return i,j
-					def two():
-						i=x
-						j=y-k
-						return i,j
-					def three():
-						i=x+k
-						j=y
-						return i,j
-					def four():
-						i=x-k
-						j=y
-						return i,j
 					cells={
 					1: one,
 					2: two,
@@ -196,7 +194,7 @@ def ClearBorders():
 						k=k+1
 						sides.clear()
 						continue
-					fillColor=img.getpixel(cell())
+					fillColor=img.getpixel(cell(x, y))
 				img.putpixel(point, fillColor)
 	img.save(f"resultWithColor.{imagename.split('.')[-1]}")
 	start()
@@ -213,67 +211,54 @@ def CropImage():
 	regions = []
 	c = []#colors
 	water = (0, 0, 255)
-	c=list(img.getdata())
-	regions=(list(set(c)))
+	
+	c=list(tqdm(img.getdata()))
+	regions=list(set(c))
 	if water in regions:
 		regions.remove(water)
+	c=np.array(['%02x%02x%02x' % i for i in tqdm(c)])
+	c=onetotwo(c, width, height)
+	
 	print(f"\nNumber of regions: {len(regions)}\n")
-	ind = 0
+	
 	try:
 		data=open("data.json","r+")
 		data.truncate(0)
-		data.write("{}")
+		data.write('{"Regions":[]}')
 		data.close()
 	except:
 		data=open("data.json", "x")
-		data.write("{}")
+		data.write('{"Regions":[]}')
 		data.close()
+		
 	with open("data.json", "r+") as file:
 		json_dump = json.load(file)
-		json_dump["Regions"] = []
+		onlyColors=[]
 		print("\nFinding the border of the provinces and writing it in JSON format...\n")
-		for color in tqdm(regions, ascii=" ░▒▓"):
-			startX = (0, 0)
-			endX = (0, 0)
-			startY = (0, 0)
-			endY = (0, 0)
-			for y in range(height):
-				for x in range(width):
-					if (c[x + (width*y)] == color):
-						if c[startX[0]+ (width * startX[1])] != color:
-							startX = (x, y)
-							endX = (x, y)
-						if c[startY[0] + (width * startY[1])] != color:
-							startY = (x, y)
-							endY = (x, y)
-						if startX[0] >= x:
-							startX = (x, y)
-						if endX[0] <= x:
-							endX = (x, y)
-						if startY[1] >= y:
-							startY = (x, y)
-						if endY[1] <= y:
-							endY = (x, y)
-			xs = startX[0] - 1
-			ys = height - startY[1] - 2
-			ws = endX[0] - startX[0] + 3
-			hs = startY[1] - endY[1] + 3
-			if hs < 0:
-				ys = height-(ys - (ys - endY[1] + 3) + 5)
-				hs = endY[1] - startY[1] + 3
-			pos = ((startX[0]+endX[0])/2-(width/2)+1,(startY[1]+endY[1])/2-(height/2))
-			json_dump["Regions"].append({"id":ind, "position": pos, "color": color, "hex": '%02x%02x%02x' % color, "xs": xs, "ys": ys, "ws": ws, "hs": hs})
-			ind = ind + 1
+		a=np.array(c)
+		json_dump=findBorders(regions, a, json_dump, width, height)
 		file.seek(0)
 		json.dump(json_dump, file, indent=2)
 		start()
-    
+
+def findBorders(regions, a, json_dump, width, height):
+    for color in regions:
+        onlyColors=np.array(np.where(a=='%02x%02x%02x' % color), dtype=np.int16)
+        startX=np.max(onlyColors[0])
+        endX=np.min(onlyColors[0])
+        startY=np.max(onlyColors[1])
+        endY=np.min(onlyColors[1])
+        json_dump["Regions"].append({"color": color,"pos":((startX+endX)/2-(width/2)+1,(startY+endY)/2-(height/2)), "xs": int(endX - 1), "ys": int(height- startY - 2), "ws": int(startX - endX + 3), "hs": int(startY - endY + 3)})
+    return json_dump
 def clear(): 
     if os.name== 'nt': 
         _ = os.system('cls') 
     else: 
         _ = os.system('clear')
         
+def onetotwo(c, width, height):
+    return [[c[x+(width*y)] for y in range(height)] for x in tqdm(range(width))]
+    
 def printPictureList():
 	extensions=['png', 'bmp', 'jpg']
 	files=[]
